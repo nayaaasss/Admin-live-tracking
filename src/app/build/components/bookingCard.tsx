@@ -1,4 +1,3 @@
-// types/booking.ts
 export interface Booking {
   id: number;
   user_id: number;
@@ -16,7 +15,6 @@ export interface Booking {
   arrival_status?: string;
 }
 
-// components/BookingCard.tsx
 export interface BookingCardProps {
   booking: Booking;
 }

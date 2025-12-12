@@ -1,220 +1,342 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   GoogleMap,
   Marker,
-  LoadScript,
   CircleF,
-  OverlayView,
   Polygon,
+  OverlayView,
+  useJsApiLoader,
 } from "@react-google-maps/api";
-import { ToastContainer, toast } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
 
-const containerStyle = { width: "100%", height: "650px" };
-const defaultCenter = { lat: -6.1044, lng: 106.88 };
-
-type DriverData = {
-  userId: number;
-  lat: number;
-  lng: number;
-  email?: string;
-  booking_status?: "fit" | "none" | "error" | "strange" | "wrong_destination";
-  arrival_status?: "ontime" | "early" | "late" | "outside" | "-" | "geofence_not_found";
-  destination?: string;
-  current_terminal?: string;
-  alert?: string;
+export type DriverTrackingWS = {
+  ID: number;
+  UserID: string;
+  Name: string;
+  Lat: number;
+  Lng: number;
+  Status: string;
+  ArrivalStatus: string;
+  PortName: string;
+  TerminalName: string;
+  GeofenceName: string;
+  IsActive: boolean;
 };
 
-type GeofenceArea = {
+export type GeofenceArea = {
   id: number;
   type: string;
   name: string;
   lat: number;
   lng: number;
   radius: number;
-  color: string;
-  latMin?: number;
-  latMax?: number;
-  lngMin?: number;
-  lngMax?: number;
+  color?: string;
   polygon?: number[][];
 };
 
-interface GeofenceAPIResponse {
-  id: number;
-  type?: string;
-  name: string;
-  lat?: number;
-  lng?: number;
-  radius?: number;
-  latMin?: number;
-  latMax?: number;
-  lngMin?: number;
-  lngMax?: number;
-  polygon?: number[][];
-}
+const containerStyle = { width: "100%", height: "650px" };
+const defaultCenter = { lat: -6.1044, lng: 106.88 };
 
+const geofenceColor = (g: GeofenceArea) => {
+  switch ((g.type || "").toLowerCase()) {
+    case "port":
+      return "#1E90FF";
+    case "terminal":
+      return "#32CD32";
+    case "depo":
+      return "#FF8C00";
+    default:
+      return "#999999";
+  }
+};
 
 export default function MapCard() {
-  const [drivers, setDrivers] = useState<Record<number, DriverData>>({});
-  const [center, setCenter] = useState(defaultCenter);
+  const [drivers, setDrivers] = useState<DriverTrackingWS[]>([]);
   const [geofences, setGeofences] = useState<GeofenceArea[]>([]);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  const [animatedPositions, setAnimatedPositions] = useState<
+    Record<string, { lat: number; lng: number }>
+  >({});
+
+  const lastPositionRef = useRef<
+    Record<string, { lat: number; lng: number }>
+  >({});
+
+  const animateMovement = (
+    key: string,
+    from: { lat: number; lng: number },
+    to: { lat: number; lng: number }
+  ) => {
+    const distance = Math.hypot(from.lat - to.lat, from.lng - to.lng);
+    if (distance < 0.00001) {
+      setAnimatedPositions((p) => ({ ...p, [key]: to }));
+      return;
+    }
+
+    const duration = 600;
+    const frames = 30;
+    let frame = 0;
+
+    const animate = () => {
+      frame++;
+      const progress = frame / frames;
+
+      const lat = from.lat + (to.lat - from.lat) * progress;
+      const lng = from.lng + (to.lng - from.lng) * progress;
+
+      setAnimatedPositions((prev) => ({
+        ...prev,
+        [key]: { lat, lng },
+      }));
+
+      if (frame < frames) requestAnimationFrame(animate);
+    };
+
+    requestAnimationFrame(animate);
+  };
+
+  const { isLoaded } = useJsApiLoader({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "",
+  });
 
   useEffect(() => {
-    fetch("http://localhost:8080/geofences")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data.data)) {
-          const mapped: GeofenceArea[] = data.data.map((g: GeofenceAPIResponse) => ({
-            id: g.id,
-  type: g.type || "port",
-  name: g.name,
-  lat: g.lat ?? 0,
-  lng: g.lng ?? 0,
-  radius: g.radius ?? 100,
-  color:
-    g.type === "port"
-      ? "#1E90FF"
-      : g.type === "terminal"
-        ? "#32CD32"
-        : "#FF8C00",
-  latMin: g.latMin,
-  latMax: g.latMax,
-  lngMin: g.lngMin,
-  lngMax: g.lngMax,
-  polygon: g.polygon,
-          }));
-
-          setGeofences(mapped);
-        }
-      })
-      .catch((err) => console.error("Failed to fetch geofences:", err));
+    const loadGeofences = async () => {
+      try {
+        const res = await fetch("http://localhost:8080/geofences");
+        const json = await res.json();
+        if (Array.isArray(json.data)) setGeofences(json.data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadGeofences();
   }, []);
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
-    const connectWebSocket = () => {
-      socket = new WebSocket("ws://localhost:8080/ws");
+    const connectWS = () => {
+      socketRef.current = new WebSocket("ws://localhost:8080/ws");
 
-      socket.onopen = () => console.log("Connected to WebSocket");
-      socket.onclose = () => setTimeout(connectWebSocket, 2000);
+      socketRef.current.onopen = () => console.log("WS CONNECTED");
 
-      socket.onmessage = (event) => {
+      socketRef.current.onclose = () => {
+        console.log("WS DISCONNECTED, RECONNECTING...");
+        setTimeout(connectWS, 1500);
+      };
+
+      socketRef.current.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as DriverData;
-          if (data.alert) toast.info(data.alert, { position: "top-right", autoClose: 500 });
-          if (typeof data.lat === "number" && typeof data.lng === "number") {
-            setDrivers((prev) => ({ ...prev, [data.userId]: data }));
-            setCenter({ lat: data.lat, lng: data.lng });
-          }
+          const data = JSON.parse(event.data);
+          let arrayData: Record<string, unknown>[] = [];
+
+          if (Array.isArray(data)) arrayData = data;
+          else if (data?.data && Array.isArray(data.data)) arrayData = data.data;
+          else arrayData = [data];
+
+          const normalized = arrayData
+            .map((o) => ({
+              ID: Number(o.ID ?? o.id ?? 0),
+              UserID: String(o.UserID ?? o.userId ?? o.user_id ?? ""),
+              Name: String(o.Name ?? o.name ?? ""),
+              Lat: Number(o.Lat ?? o.lat ?? 0),
+              Lng: Number(o.Lng ?? o.lng ?? 0),
+              Status: String(o.Status ?? o.status ?? ""),
+              ArrivalStatus: String(
+                o.ArrivalStatus ??
+                  o.arrivalStatus ??
+                  o.arrival_status ??
+                  ""
+              ),
+              PortName: String(o.PortName ?? o.portName ?? o.port_name ?? ""),
+              TerminalName: String(
+                o.TerminalName ??
+                  o.terminalName ??
+                  o.terminal_name ??
+                  ""
+              ),
+              GeofenceName: String(
+                o.GeofenceName ??
+                  o.geofenceName ??
+                  o.geofence_name ??
+                  ""
+              ),
+              IsActive: Boolean(
+                o.IsActive ?? o.isActive ?? o.is_active ?? true
+              ),
+            }))
+            .filter((d) => d.IsActive && d.Lat !== 0 && d.Lng !== 0);
+
+          setDrivers(normalized);
+
+          normalized.forEach((driver) => {
+            const key = `${driver.ID}-${driver.UserID}`;
+
+            const oldPos =
+              lastPositionRef.current[key] || {
+                lat: driver.Lat,
+                lng: driver.Lng,
+              };
+
+            const newPos = { lat: driver.Lat, lng: driver.Lng };
+
+            lastPositionRef.current[key] = newPos;
+
+            animateMovement(key, oldPos, newPos);
+          });
         } catch (err) {
           console.error(err);
         }
       };
     };
-    connectWebSocket();
-    return () => socket?.close();
+
+    connectWS();
+    return () => socketRef.current?.close();
   }, []);
 
-  const getMarkerColor = (driver: DriverData) => {
-    if (driver.booking_status === "wrong_destination") return "orange";
-    if (driver.booking_status === "none" || !driver.booking_status) return "ltblue";
-    if (driver.booking_status === "error") return "gray";
-    if (driver.booking_status === "strange") return "purple";
-
-    switch (driver.arrival_status) {
-      case "ontime":
-        return "green";
-      case "early":
-        return "yellow";
-      case "late":
-        return "red";
-      case "outside":
-        return "blue";
-      default:
-        return "ltblue";
-    }
-  };
+  if (!isLoaded)
+    return (
+      <div className="text-center py-12 text-gray-500 font-medium">
+        Loading map...
+      </div>
+    );
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl p-3 flex flex-col gap-4">
-      <div className="rounded-xl overflow-hidden shadow-md border border-gray-200">
-        <LoadScript googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""}>
-          <GoogleMap mapContainerStyle={containerStyle} center={center} zoom={14}>
-            {geofences.map((g) => {
-              if (g.polygon && g.polygon.length > 0) {
-                const path = g.polygon.map(p => ({ lat: Number(p[1]), lng: Number(p[0]) }));
-                return (
-                  <Polygon
-                    key={`polygon-${g.id}`}
-                    paths={path}
-                    options={{
-                      strokeColor: g.color,
-                      strokeOpacity: 0.9,
-                      strokeWeight: 2,
-                      fillColor: g.color,
-                      fillOpacity: 0.25,
-                    }}
-                  />
-                );
-              }
-              if (g.lat && g.lng && g.radius > 0) {
-                return (
-                  <CircleF
-                    key={`circle-${g.id}`}
-                    center={{ lat: g.lat, lng: g.lng }}
-                    radius={g.radius}
-                    options={{
-                      strokeColor: g.color,
-                      strokeOpacity: 0.9,
-                      strokeWeight: 2,
-                      fillColor: g.color,
-                      fillOpacity: 0.2,
-                    }}
-                  />
-                );
-              }
-              return null;
-            })}
+    <div className="rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
+      <GoogleMap
+        mapContainerStyle={containerStyle}
+        center={defaultCenter}
+        zoom={14}
+        options={{ streetViewControl: false, mapTypeControl: false }}
+      >
+        {geofences.map((g) =>
+          g.polygon ? (
+            <Polygon
+              key={g.id}
+              paths={g.polygon.map((p) => ({
+                lat: p[1],
+                lng: p[0],
+              }))}
+              options={{
+                strokeColor: geofenceColor(g),
+                strokeWeight: 2,
+                fillColor: geofenceColor(g),
+                fillOpacity: 0.2,
+              }}
+            />
+          ) : (
+            <CircleF
+              key={g.id}
+              center={{ lat: g.lat, lng: g.lng }}
+              radius={g.radius}
+              options={{
+                strokeColor: geofenceColor(g),
+                strokeWeight: 2,
+                fillColor: geofenceColor(g),
+                fillOpacity: 0.2,
+              }}
+            />
+          )
+        )}
 
+        {drivers.map((driver) => {
+          const pos =
+            animatedPositions[`${driver.ID}-${driver.UserID}`] || {
+              lat: driver.Lat,
+              lng: driver.Lng,
+            };
 
-            {Object.values(drivers).map((driver) => {
-              const markerColor = getMarkerColor(driver);
+          return (
+            <div
+              key={`wrap-${driver.ID}-${driver.UserID}`}
+              style={{ display: "contents" }}
+            >
+              <Marker
+                key={`marker-${driver.ID}-${driver.UserID}`}
+                position={pos}
+                icon={{
+                  url: "/car.png",
+                  scaledSize: new google.maps.Size(38, 38),
+                  anchor: new google.maps.Point(19, 19),
+                }}
+              />
 
-              return (
-                <div key={`driver-${driver.userId}`}>
-                  <Marker
-                    position={{ lat: driver.lat, lng: driver.lng }}
-                    icon={
-                      window.google
-                        ? { url: `https://maps.google.com/mapfiles/ms/icons/${markerColor}-dot.png`, scaledSize: new window.google.maps.Size(40, 40) }
-                        : undefined
-                    }
-                  />
-                  <OverlayView position={{ lat: driver.lat, lng: driver.lng }} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
-                    <div style={{ transform: "translate(-50%, -130%)" }}>
-                      <div className="bg-white/90 border border-gray-200 rounded-xl shadow-md px-3 py-2 text-sm text-gray-700 backdrop-blur-sm min-w-[150px] hover:shadow-lg">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="font-semibold truncate">{driver.email ? driver.email.split("@")[0] : `Driver ${driver.userId}`}</span>
-                        </div>
-                        <div className="text-xs space-y-0.5">
-                          <p>Booking: <b className={driver.booking_status === "fit" ? "text-emerald-600" : driver.booking_status === "wrong_destination" ? "text-orange-500" : driver.booking_status === "strange" ? "text-red-500" : "text-gray-400"}>{driver.booking_status}</b></p>
-                          <p>Arrival: <b className={driver.arrival_status === "ontime" ? "text-emerald-600" : driver.arrival_status === "late" ? "text-rose-500" : driver.arrival_status === "early" ? "text-amber-500" : "text-gray-400"}>{driver.arrival_status}</b></p>
-                          {driver.destination && <p>Destination: <b className="text-indigo-600">{driver.destination}</b></p>}
-                          {driver.current_terminal && <p>Current: <b className="text-blue-600">{driver.current_terminal}</b></p>}
-                        </div>
-                      </div>
+              <OverlayView
+                key={`overlay-${driver.ID}-${driver.UserID}`}
+                position={pos}
+                mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+              >
+                <div className="relative flex flex-col items-center group">
+                  <div className="bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 text-xs font-semibold shadow-md mb-1 border border-gray-200">
+                    {driver.Name}
+                  </div>
+
+                  <div
+                    className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-[230px]
+                    bg-white/95 backdrop-blur-lg border border-gray-100 rounded-2xl 
+                    shadow-xl p-4 text-xs opacity-0 group-hover:opacity-100 
+                    transition-all duration-200 pointer-events-none z-20"
+                  >
+                    <div className="font-bold text-gray-900 text-sm mb-2 truncate">
+                      {driver.Name}
                     </div>
-                  </OverlayView>
+
+                    <div className="flex justify-between mb-1">
+                      <span className="text-gray-500">Status</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          driver.Status === "fit"
+                            ? "bg-green-100 text-green-700"
+                            : driver.Status === "strange"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-yellow-100 text-yellow-700"
+                        }`}
+                      >
+                        {driver.Status}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between mb-1">
+                      <span className="text-gray-500">Arrival</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          driver.ArrivalStatus === "ontime"
+                            ? "bg-green-100 text-green-700"
+                            : driver.ArrivalStatus === "late"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
+                        {driver.ArrivalStatus}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between mb-1">
+                      <span className="text-gray-500">Port</span>
+                      <span className="text-indigo-600 font-semibold">
+                        {driver.TerminalName}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Terminal</span>
+                      <span className="text-blue-600 font-semibold">
+                        {driver.PortName}
+                      </span>
+                    </div>
+
+                    {driver.GeofenceName && (
+                      <div className="mt-2 text-xs text-red-600 font-semibold truncate">
+                        Inside: {driver.GeofenceName}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
-          </GoogleMap>
-        </LoadScript>
-      </div>
-      <ToastContainer position="top-right" autoClose={5000} aria-label={undefined} />
+              </OverlayView>
+            </div>
+          );
+        })}
+      </GoogleMap>
     </div>
   );
 }
