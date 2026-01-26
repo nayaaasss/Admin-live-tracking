@@ -63,7 +63,7 @@ export default function DashboardPage() {
     switch (status) {
       case "fit":
         return "bg-green-100 text-green-800";
-      case "strange":
+      case "stranger":
         return "bg-gray-200 text-gray-600";
       case "not match":
         return "bg-yellow-100 text-yellow-800";
@@ -130,8 +130,9 @@ export default function DashboardPage() {
               </div>
             ) : bookings.length === 0 ? (
               <div className="text-gray-500 text-center mt-20">
-                Driver tidak ada booking
+                There is no activities
               </div>
+            
             ) : (
               bookings
                 .slice()
@@ -140,14 +141,19 @@ export default function DashboardPage() {
                   <div
                     key={b.id}
                     className={`p-3 rounded-lg border ${b.is_active === false
-                        ? "bg-gray-100 border-gray-200 text-gray-400"
-                        : "bg-white border-gray-200"
+                      ? "bg-gray-100 border-gray-200 text-gray-400"
+                      : "bg-white border-gray-200"
                       }`}
                   >
                     <div className="flex justify-between items-center mb-4">
                       <span className="font-medium">{b.name || "Driver tidak ada booking"}</span>
 
                       <div className="flex gap-2">
+                        {b.is_active === false && (
+                        <span className="text-xs px-2 py-1 rounded-full font-semibold bg-black text-white">
+                          inactive
+                        </span>
+                      )}
                         <span
                           className={`text-xs px-2 py-1 rounded-full font-semibold ${getArrivalBadge(
                             b.arrival_status
@@ -161,21 +167,27 @@ export default function DashboardPage() {
                             b.status
                           )}`}
                         >
-                          {b.status || "strange"}
+                          {b.status || "stranger"}
                         </span>
                       </div>
                     </div>
 
                     <p className="text-sm text-gray-500">
-                      Pelabuhan: <span className="font-medium">{b.port_name || "-"}</span> | Terminal:{" "}
+                      Pelabuhan: <span className="font-medium">{b.port_name || "-"}</span> Terminal:{" "}
                       <span className="font-medium">{b.terminal_name || "-"}</span>
                     </p>
                     <p className="text-sm text-gray-500">Gate In: {formatGateIn(b.gate_in_time)}</p>
-                    {b.container_no && b.container_type && (
+                    {(b.container_no || b.container_type) && (
                       <p className="text-sm text-gray-500">
-                        Container: {b.container_no} {b.container_type}
+                        Container:{" "}
+                        <span className="font-medium">
+                          {b.container_no || "-"} {b.container_type || ""}
+                          {b.container_size && ` / ${b.container_size}`}
+                          {b.container_status && ` (${b.container_status})`}
+                        </span>
                       </p>
                     )}
+
                   </div>
                 ))
             )}

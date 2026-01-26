@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   GoogleMap,
   Marker,
-  CircleF,
   Polygon,
   OverlayView,
   useJsApiLoader,
@@ -20,26 +19,23 @@ export type DriverTrackingWS = {
   ArrivalStatus: string;
   PortName: string;
   TerminalName: string;
-  GeofenceName: string;
+  ZoneName: string;
   IsActive: boolean;
 };
 
-export type GeofenceArea = {
+export type Zone = {
   id: number;
   type: string;
   name: string;
-  lat: number;
-  lng: number;
-  radius: number;
-  color?: string;
+  category: "port" | "terminal" | "depo" | string;
   polygon?: number[][];
 };
 
 const containerStyle = { width: "100%", height: "650px" };
 const defaultCenter = { lat: -6.1044, lng: 106.88 };
 
-const geofenceColor = (g: GeofenceArea) => {
-  switch ((g.type || "").toLowerCase()) {
+const zoneColor = (z: Zone) => {
+  switch ((z.category || "").toLowerCase()) {
     case "port":
       return "#1E90FF";
     case "terminal":
@@ -53,16 +49,12 @@ const geofenceColor = (g: GeofenceArea) => {
 
 export default function MapCard() {
   const [drivers, setDrivers] = useState<DriverTrackingWS[]>([]);
-  const [geofences, setGeofences] = useState<GeofenceArea[]>([]);
+  const [zones, setZones] = useState<Zone[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
-
   const [animatedPositions, setAnimatedPositions] = useState<
     Record<string, { lat: number; lng: number }>
   >({});
-
-  const lastPositionRef = useRef<
-    Record<string, { lat: number; lng: number }>
-  >({});
+  const lastPositionRef = useRef<Record<string, { lat: number; lng: number }>>({});
 
   const animateMovement = (
     key: string,
@@ -75,7 +67,6 @@ export default function MapCard() {
       return;
     }
 
-    const duration = 600;
     const frames = 30;
     let frame = 0;
 
@@ -102,17 +93,23 @@ export default function MapCard() {
   });
 
   useEffect(() => {
-    const loadGeofences = async () => {
+    const loadZones = async () => {
       try {
-        const res = await fetch("http://localhost:8080/geofences");
+        const res = await fetch("http://localhost:8080/zones/custom");
         const json = await res.json();
-        if (Array.isArray(json.data)) setGeofences(json.data);
+
+
+        if (Array.isArray(json.data)) setZones(json.data);
+        else if (Array.isArray(json)) setZones(json);
+        else setZones([]);
       } catch (err) {
         console.error(err);
+        setZones([]);
       }
     };
-    loadGeofences();
+    loadZones();
   }, []);
+
 
   useEffect(() => {
     const connectWS = () => {
@@ -135,6 +132,7 @@ export default function MapCard() {
           else arrayData = [data];
 
           const normalized = arrayData
+            .filter((o): o is Record<string, unknown> => o !== null && typeof o === "object")
             .map((o) => ({
               ID: Number(o.ID ?? o.id ?? 0),
               UserID: String(o.UserID ?? o.userId ?? o.user_id ?? ""),
@@ -143,45 +141,28 @@ export default function MapCard() {
               Lng: Number(o.Lng ?? o.lng ?? 0),
               Status: String(o.Status ?? o.status ?? ""),
               ArrivalStatus: String(
-                o.ArrivalStatus ??
-                  o.arrivalStatus ??
-                  o.arrival_status ??
-                  ""
+                o.ArrivalStatus ?? o.arrivalStatus ?? o.arrival_status ?? ""
               ),
               PortName: String(o.PortName ?? o.portName ?? o.port_name ?? ""),
               TerminalName: String(
-                o.TerminalName ??
-                  o.terminalName ??
-                  o.terminal_name ??
-                  ""
+                o.TerminalName ?? o.terminalName ?? o.terminal_name ?? ""
               ),
-              GeofenceName: String(
-                o.GeofenceName ??
-                  o.geofenceName ??
-                  o.geofence_name ??
-                  ""
-              ),
-              IsActive: Boolean(
-                o.IsActive ?? o.isActive ?? o.is_active ?? true
-              ),
+              ZoneName: String(o.ZoneName ?? o.zoneName ?? o.zone_name ?? ""),
+              IsActive: Boolean(o.IsActive ?? o.isActive ?? o.is_active ?? true),
             }))
-            .filter((d) => d.IsActive && d.Lat !== 0 && d.Lng !== 0);
+            .filter((d) => d.IsActive && d.Lat !== 0 && d.Lng !== 0)
+
 
           setDrivers(normalized);
 
           normalized.forEach((driver) => {
             const key = `${driver.ID}-${driver.UserID}`;
-
-            const oldPos =
-              lastPositionRef.current[key] || {
-                lat: driver.Lat,
-                lng: driver.Lng,
-              };
-
+            const oldPos = lastPositionRef.current[key] || {
+              lat: driver.Lat,
+              lng: driver.Lng,
+            };
             const newPos = { lat: driver.Lat, lng: driver.Lng };
-
             lastPositionRef.current[key] = newPos;
-
             animateMovement(key, oldPos, newPos);
           });
         } catch (err) {
@@ -209,34 +190,19 @@ export default function MapCard() {
         zoom={14}
         options={{ streetViewControl: false, mapTypeControl: false }}
       >
-        {geofences.map((g) =>
-          g.polygon ? (
+        {zones.map((zone) =>
+          zone.polygon ? (
             <Polygon
-              key={g.id}
-              paths={g.polygon.map((p) => ({
-                lat: p[1],
-                lng: p[0],
-              }))}
+              key={zone.id}
+              paths={zone.polygon.map((p) => ({ lat: p[1], lng: p[0] }))}
               options={{
-                strokeColor: geofenceColor(g),
+                strokeColor: zoneColor(zone),
                 strokeWeight: 2,
-                fillColor: geofenceColor(g),
+                fillColor: zoneColor(zone),
                 fillOpacity: 0.2,
               }}
             />
-          ) : (
-            <CircleF
-              key={g.id}
-              center={{ lat: g.lat, lng: g.lng }}
-              radius={g.radius}
-              options={{
-                strokeColor: geofenceColor(g),
-                strokeWeight: 2,
-                fillColor: geofenceColor(g),
-                fillOpacity: 0.2,
-              }}
-            />
-          )
+          ) : null
         )}
 
         {drivers.map((driver) => {
@@ -247,10 +213,7 @@ export default function MapCard() {
             };
 
           return (
-            <div
-              key={`wrap-${driver.ID}-${driver.UserID}`}
-              style={{ display: "contents" }}
-            >
+            <div key={`wrap-${driver.ID}-${driver.UserID}`} style={{ display: "contents" }}>
               <Marker
                 key={`marker-${driver.ID}-${driver.UserID}`}
                 position={pos}
@@ -284,28 +247,29 @@ export default function MapCard() {
                     <div className="flex justify-between mb-1">
                       <span className="text-gray-500">Status</span>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                          driver.Status === "fit"
-                            ? "bg-green-100 text-green-700"
-                            : driver.Status === "strange"
-                            ? "bg-red-100 text-red-700"
-                            : "bg-yellow-100 text-yellow-700"
-                        }`}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${driver.ArrivalStatus === "ontime"
+                          ? "bg-green-100 text-green-700"
+                          : driver.ArrivalStatus === "early"
+                            ? "bg-blue-100 text-blue-700"
+                            : driver.ArrivalStatus === "late"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-gray-100 text-gray-700"
+                          }`}
                       >
                         {driver.Status}
                       </span>
+
                     </div>
 
                     <div className="flex justify-between mb-1">
                       <span className="text-gray-500">Arrival</span>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                          driver.ArrivalStatus === "ontime"
-                            ? "bg-green-100 text-green-700"
-                            : driver.ArrivalStatus === "late"
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${driver.ArrivalStatus === "ontime"
+                          ? "bg-green-100 text-green-700"
+                          : driver.ArrivalStatus === "late"
                             ? "bg-red-100 text-red-700"
                             : "bg-gray-100 text-gray-700"
-                        }`}
+                          }`}
                       >
                         {driver.ArrivalStatus}
                       </span>
@@ -325,9 +289,9 @@ export default function MapCard() {
                       </span>
                     </div>
 
-                    {driver.GeofenceName && (
+                    {driver.ZoneName && (
                       <div className="mt-2 text-xs text-red-600 font-semibold truncate">
-                        Inside: {driver.GeofenceName}
+                        Inside: {driver.ZoneName}
                       </div>
                     )}
                   </div>

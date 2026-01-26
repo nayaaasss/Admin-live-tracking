@@ -41,6 +41,13 @@ export default function DashboardPage() {
           ? allBookings
           : allBookings.filter((b) => String(b.user_id) === String(decoded.user_id));
 
+      const sorted = [...filtered].sort(
+        (a, b) =>
+          new Date(b.gate_in_time).getTime() -
+          new Date(a.gate_in_time).getTime()
+      );
+
+      setBookings(sorted);
       setBookings(filtered);
     } catch (err) {
       console.error("Failed to fetch bookings:", err);
@@ -82,17 +89,16 @@ export default function DashboardPage() {
 
     bookings.forEach((b) => {
       if (b.arrival_status === "early") result.early += 1;
-      if (b.arrival_status === "on_time") result.on_time += 1;
+      if (b.arrival_status === "on time") result.on_time += 1;
       if (b.arrival_status === "late") result.late += 1;
 
       if (b.status === "fit") result.fit += 1;
       if (b.status === "strange") result.strange += 1;
-      if (b.status === "off_schedule") result.off_schedule += 1;
     });
 
     return result;
   };
-
+  
   const aggregates = getAggregates();
 
   const formatGateIn = (dateStr?: string) => {
@@ -111,7 +117,6 @@ export default function DashboardPage() {
         <Card title="Late" amount={aggregates.late} />
         <Card title="Fit" amount={aggregates.fit} />
         <Card title="Strange" amount={aggregates.strange} />
-        <Card title="Off-schedule" amount={aggregates.off_schedule} />
       </div>
 
       <div className="bg-white rounded-2xl shadow border border-gray-200 p-6">

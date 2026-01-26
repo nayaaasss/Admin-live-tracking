@@ -6,13 +6,13 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   const menuItems = [
-    { name: "Dashboard", href: "/admin/dashboard", icon: <Gauge size={18} /> },
+    { name: "Tracking", href: "/admin/dashboard", icon: <Gauge size={18} /> },
     { name: "Reports", href: "/admin/reports", icon: <BarChart3 size={18} /> },
   ];
 
   return (
-    <aside className="w-64 h-250 bg-white shadow-md p-4">
-      <h1 className="text-2xl font-bold mb-8">TBS</h1>
+    <aside className="w-64 h-300 bg-white shadow-md p-4">
+      <h1 className="text-2xl font-bold mb-8">Dashboard</h1>
 
       <nav className="space-y-3">
         {menuItems.map((item) => {
