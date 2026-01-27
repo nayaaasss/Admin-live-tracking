@@ -74,7 +74,7 @@ export default function DashboardPage() {
 
   const fetchBookings = async (decoded: DecodedToken) => {
     try {
-      const res = await API.get("http://localhost:8080/api/location/active");
+      const res = await API.get("https://api-gateway.ilcs.xyz/api/geofencing/api/location/active");
       const allBookings: Booking[] = Array.isArray(res.data.data) ? res.data.data : [];
 
       const filtered =

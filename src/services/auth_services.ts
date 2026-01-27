@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const loginAdmin = async (email: string, password: string) => {
-  const res = await axios.post("http://localhost:8080/admin/login", {
+  const res = await axios.post("https://api-gateway.ilcs.xyz/api/geofencing/admin/login", {
     email,
     password,
   });

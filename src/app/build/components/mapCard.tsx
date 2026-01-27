@@ -95,7 +95,7 @@ export default function MapCard() {
   useEffect(() => {
     const loadZones = async () => {
       try {
-        const res = await fetch("http://localhost:8080/zones/custom");
+        const res = await fetch("https://api-gateway.ilcs.xyz/api/geofencing/zones/custom");
         const json = await res.json();
 
 
@@ -113,7 +113,7 @@ export default function MapCard() {
 
   useEffect(() => {
     const connectWS = () => {
-      socketRef.current = new WebSocket("ws://localhost:8080/ws");
+      socketRef.current = new WebSocket("https://api-gateway.ilcs.xyz/api/geofencing/ws");
 
       socketRef.current.onopen = () => console.log("WS CONNECTED");
 
