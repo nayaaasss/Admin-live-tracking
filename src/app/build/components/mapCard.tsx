@@ -98,7 +98,6 @@ export default function MapCard() {
         const res = await fetch("https://api-gateway.ilcs.xyz/api/geofencing/zones/custom");
         const json = await res.json();
 
-
         if (Array.isArray(json.data)) setZones(json.data);
         else if (Array.isArray(json)) setZones(json);
         else setZones([]);
